@@ -7,7 +7,7 @@ const app = express();
 
 const auth0ManagementClient = new ManagementClient({
     domain: process.env.AUTH0_MGMT_CLIENT_DOMAIN,
-    clientId: process.env.AUTH0_MGMT_CLIENT_DOMAIN,
+    clientId: process.env.AUTH0_MGMT_CLIENT_ID,
     clientSecret: process.env.AUTH0_MGMT_CLIENT_SECRET,
 });
 
