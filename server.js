@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const { auth  } = require('express-openid-connect');
 const { ManagementClient } = require('auth0');
+const session = require('express-session');
 
 const app = express();
 
@@ -27,45 +28,25 @@ const config = {
   },
 };
 
+app.use(session({
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: true
+  }));
+
 // auth router attaches /login, /logout, and /callback routes to the baseURL
 app.use(auth(config));
 
-/*
-
-Auth0 Post-Login Action:
-
-exports.onExecutePostLogin = async (event, api) => {
-  const durationInSeconds = 10;
-  const expirationTime = Math.floor(Date.now() / 1000) + durationInSeconds;
-
-  const namespace = 'http://localhost:3000';
-  api.idToken.setCustomClaim(`${namespace}/access_expires_at`, expirationTime);
-};
-
-This will append the 'access_expires_at' claim to the ID token, set to expire 10 seconds after login.
-Without this Action, the claim won't be present and the server logic won't function as intended.
-
-*/
-
 
 app.get('/', async (req, res) => {
-  if (!req.oidc.isAuthenticated()) {
-    return res.redirect('/login');
-  }
+    if (!req.oidc.isAuthenticated()) {
+      return res.redirect('/login');
+    }
 
-  const namespace = 'http://localhost:3000';
-  const accessExpiresAt = req.oidc.user[`${namespace}/access_expires_at`];
-  const currentTime = Math.floor(Date.now() / 1000);
-
-  console.log('Access Expires At:', accessExpiresAt);
-  console.log('Current Time:', currentTime);
-  console.log('Is Access Token Expired?', accessExpiresAt && currentTime >= accessExpiresAt);
-
-
-  if (accessExpiresAt && currentTime >= accessExpiresAt) {
-    try {
+    // Check if the session has expired.
+    if (req.session.accessExpiresAt && Date.now() >= req.session.accessExpiresAt) {
+      try {
         const userId = req.oidc.user.sub;
-
         const permissionsToRemove = [
           {
             permission_name: 'see:stuff',
@@ -73,30 +54,44 @@ app.get('/', async (req, res) => {
           }
         ];
 
-        await auth0ManagementClient.users.permissions.delete(userId, {permissions: permissionsToRemove} )
-        console.log(`Permissions removed for user ${userId}`);
+        await auth0ManagementClient.users.permissions.delete(userId, { permissions: permissionsToRemove });
+        console.log(`Permissions removed for user ${userId} due to session expiration.`);
+
       } catch (error) {
-        console.error('Error removing permissions:', error);
+        console.error('Error removing permissions on session expiration:', error);
       }
 
+      // Clear the expiration and log the user out.
+      delete req.session.accessExpiresAt;
       return res.redirect('/logout');
-  }
-
-  const decodeJWT = (token) => {
-    if (!token) return null;
-    try {
-      const parts = token.split('.');
-      if (parts.length !== 3) return null;
-
-      return {
-        header: JSON.parse(Buffer.from(parts[0], 'base64').toString()),
-        payload: JSON.parse(Buffer.from(parts[1], 'base64').toString()),
-        signature: parts[2]
-      };
-    } catch (e) {
-      return null;
     }
-  };
+
+    const decodeJWT = (token) => {
+      if (!token) return null;
+      try {
+        const parts = token.split('.');
+        if (parts.length !== 3) return null;
+
+        return {
+          header: JSON.parse(Buffer.from(parts[0], 'base64').toString()),
+          payload: JSON.parse(Buffer.from(parts[1], 'base64').toString()),
+          signature: parts[2]
+        };
+      } catch (e) {
+        return null;
+      }
+    };
+
+    const accessToken = req.oidc.accessToken?.access_token;
+    const decodedToken = decodeJWT(accessToken);
+    const permissions = decodedToken?.payload?.permissions || [];
+
+    // If the user doesn't have the 'ttl:infinite' permission and no expiry is set,
+    // set an expiry on their session for 10 seconds from now.
+    if (!permissions.includes('ttl:infinite') && !req.session.accessExpiresAt) {
+      req.session.accessExpiresAt = Date.now() + 10000; // 10-second lifetime
+      console.log(`Session expiration set for user ${req.oidc.user.sub}`);
+    }
 
   const data = {
     user: req.oidc.user,
