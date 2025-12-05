@@ -1,0 +1,120 @@
+require('dotenv').config();
+const express = require('express');
+const { auth  } = require('express-openid-connect');
+const { ManagementClient } = require('auth0');
+
+const app = express();
+
+const auth0ManagementClient = new ManagementClient({
+    domain: process.env.AUTH0_MGMT_CLIENT_DOMAIN,
+    clientId: process.env.AUTH0_MGMT_CLIENT_DOMAIN,
+    clientSecret: process.env.AUTH0_MGMT_CLIENT_SECRET,
+});
+
+const config = {
+  authRequired: false,
+  auth0Logout: true,
+  secret: process.env.AUTH0_SECRET,
+  baseURL: process.env.BASE_URL,
+  clientID: process.env.AUTH0_CLIENT_ID,
+  issuerBaseURL: process.env.AUTH0_ISSUER_BASE_URL,
+  clientSecret: process.env.AUTH0_CLIENT_SECRET,
+  authorizationParams: {
+    response_type: 'code',
+    scope: 'openid profile email',
+    audience: process.env.AUTH0_AUDIENCE,
+
+  },
+};
+
+// auth router attaches /login, /logout, and /callback routes to the baseURL
+app.use(auth(config));
+
+/*
+
+Auth0 Post-Login Action:
+
+exports.onExecutePostLogin = async (event, api) => {
+  const durationInSeconds = 10;
+  const expirationTime = Math.floor(Date.now() / 1000) + durationInSeconds;
+
+  const namespace = 'http://localhost:3000';
+  api.idToken.setCustomClaim(`${namespace}/access_expires_at`, expirationTime);
+};
+
+This will append the 'access_expires_at' claim to the ID token, set to expire 10 seconds after login.
+Without this Action, the claim won't be present and the server logic won't function as intended.
+
+*/
+
+
+app.get('/', async (req, res) => {
+  if (!req.oidc.isAuthenticated()) {
+    return res.redirect('/login');
+  }
+
+  const namespace = 'http://localhost:3000';
+  const accessExpiresAt = req.oidc.user[`${namespace}/access_expires_at`];
+  const currentTime = Math.floor(Date.now() / 1000);
+
+  console.log('Access Expires At:', accessExpiresAt);
+  console.log('Current Time:', currentTime);
+  console.log('Is Access Token Expired?', accessExpiresAt && currentTime >= accessExpiresAt);
+
+
+  if (accessExpiresAt && currentTime >= accessExpiresAt) {
+    try {
+        const userId = req.oidc.user.sub;
+
+        const permissionsToRemove = [
+          {
+            permission_name: 'see:stuff',
+            resource_server_identifier: process.env.AUTH0_AUDIENCE
+          }
+        ];
+
+        await auth0ManagementClient.users.permissions.delete(userId, {permissions: permissionsToRemove} )
+        console.log(`Permissions removed for user ${userId}`);
+      } catch (error) {
+        console.error('Error removing permissions:', error);
+      }
+
+      return res.redirect('/logout');
+  }
+
+  const decodeJWT = (token) => {
+    if (!token) return null;
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) return null;
+
+      return {
+        header: JSON.parse(Buffer.from(parts[0], 'base64').toString()),
+        payload: JSON.parse(Buffer.from(parts[1], 'base64').toString()),
+        signature: parts[2]
+      };
+    } catch (e) {
+      return null;
+    }
+  };
+
+  const data = {
+    user: req.oidc.user,
+    accessToken: {
+      encoded: req.oidc.accessToken?.access_token,
+      decoded: decodeJWT(req.oidc.accessToken?.access_token)
+    },
+    idToken: {
+      encoded: req.oidc.idToken,
+      decoded: decodeJWT(req.oidc.idToken)
+    },
+    refreshToken: req.oidc.refreshToken
+  };
+
+  res.send('<pre>' + JSON.stringify(data, null, 2) + '</pre>');
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
