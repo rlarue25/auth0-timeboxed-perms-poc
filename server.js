@@ -37,6 +37,21 @@ app.use(session({
 // auth router attaches /login, /logout, and /callback routes to the baseURL
 app.use(auth(config));
 
+const decodeJWT = (token) => {
+    if (!token) return null;
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) return null;
+
+      return {
+        header: JSON.parse(Buffer.from(parts[0], 'base64').toString()),
+        payload: JSON.parse(Buffer.from(parts[1], 'base64').toString()),
+        signature: parts[2]
+      };
+    } catch (e) {
+      return null;
+    }
+  };
 
 app.get('/', async (req, res) => {
     if (!req.oidc.isAuthenticated()) {
@@ -48,33 +63,17 @@ app.get('/', async (req, res) => {
       try {
         const userId = req.oidc.user.sub;
 
-        await auth0ManagementClient.users.roles.delete(userId, {roles: ["rol_xAmC4cCVlFVtQ8r4"]})
-        console.log(`service-pulse-temp-user removed for user ${userId} due to session expiration.`);
+        await auth0ManagementClient.users.roles.delete(userId, {roles: ["rol_xAmC4cCVlFVtQ8r4"]}) // service-pulse-temp-user roleId from management panel
+        console.log(`service-pulse-temp-user role removed for user ${userId} due to session expiration.`);
 
       } catch (error) {
-        console.error('service-pulse-temp-user Error removing permissions on session expiration:', error);
+        console.error(' Error removing service-pulse-temp-user role on session expiration:', error);
       }
 
       // Clear the expiration and log the user out.
       delete req.session.accessExpiresAt;
       return res.redirect('/logout');
     }
-
-    const decodeJWT = (token) => {
-        if (!token) return null;
-        try {
-          const parts = token.split('.');
-          if (parts.length !== 3) return null;
-
-          return {
-            header: JSON.parse(Buffer.from(parts[0], 'base64').toString()),
-            payload: JSON.parse(Buffer.from(parts[1], 'base64').toString()),
-            signature: parts[2]
-          };
-        } catch (e) {
-          return null;
-        }
-      };
 
     const accessToken = req.oidc.accessToken?.access_token;
     const decodedToken = decodeJWT(accessToken);
