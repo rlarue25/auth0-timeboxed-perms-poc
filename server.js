@@ -47,18 +47,12 @@ app.get('/', async (req, res) => {
     if (req.session.accessExpiresAt && Date.now() >= req.session.accessExpiresAt) {
       try {
         const userId = req.oidc.user.sub;
-        const permissionsToRemove = [
-          {
-            permission_name: 'see:stuff',
-            resource_server_identifier: process.env.AUTH0_AUDIENCE
-          }
-        ];
 
-        await auth0ManagementClient.users.permissions.delete(userId, { permissions: permissionsToRemove });
-        console.log(`Permissions removed for user ${userId} due to session expiration.`);
+        await auth0ManagementClient.users.roles.delete(userId, {roles: ["rol_xAmC4cCVlFVtQ8r4"]})
+        console.log(`service-pulse-temp-user removed for user ${userId} due to session expiration.`);
 
       } catch (error) {
-        console.error('Error removing permissions on session expiration:', error);
+        console.error('service-pulse-temp-user Error removing permissions on session expiration:', error);
       }
 
       // Clear the expiration and log the user out.
@@ -67,24 +61,30 @@ app.get('/', async (req, res) => {
     }
 
     const decodeJWT = (token) => {
-      if (!token) return null;
-      try {
-        const parts = token.split('.');
-        if (parts.length !== 3) return null;
+        if (!token) return null;
+        try {
+          const parts = token.split('.');
+          if (parts.length !== 3) return null;
 
-        return {
-          header: JSON.parse(Buffer.from(parts[0], 'base64').toString()),
-          payload: JSON.parse(Buffer.from(parts[1], 'base64').toString()),
-          signature: parts[2]
-        };
-      } catch (e) {
-        return null;
-      }
-    };
+          return {
+            header: JSON.parse(Buffer.from(parts[0], 'base64').toString()),
+            payload: JSON.parse(Buffer.from(parts[1], 'base64').toString()),
+            signature: parts[2]
+          };
+        } catch (e) {
+          return null;
+        }
+      };
 
     const accessToken = req.oidc.accessToken?.access_token;
     const decodedToken = decodeJWT(accessToken);
     const permissions = decodedToken?.payload?.permissions || [];
+
+    // If the user doesn't have the 'see:stuff' permission, log them out immediately.
+    if (!permissions.includes('see:stuff')) {
+        console.log(`User ${req.oidc.user.sub} lacks 'see:stuff' permission. Logging out.`);
+        return res.redirect('/logout');
+    }
 
     // If the user doesn't have the 'ttl:infinite' permission and no expiry is set,
     // set an expiry on their session for 10 seconds from now.
